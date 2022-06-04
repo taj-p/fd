@@ -38,7 +38,6 @@ use crate::regex_helper::{pattern_has_uppercase_char, pattern_matches_strings_wi
 #[cfg(all(
     not(windows),
     not(target_os = "android"),
-    not(target_os = "macos"),
     not(target_os = "freebsd"),
     not(target_env = "musl"),
     not(target_arch = "riscv64"),
@@ -80,8 +79,44 @@ fn run() -> Result<ExitCode> {
 
     let config = construct_config(matches, &pattern_regex)?;
     ensure_use_hidden_option_for_leading_dot_pattern(&config, &pattern_regex)?;
-    let re = build_regex(pattern_regex, &config)?;
-    walk::scan(&search_paths, Arc::new(re), Arc::new(config))
+    let regex = build_regex(pattern_regex, &config)?;
+    walk(search_paths, regex, config)
+}
+
+fn walk(
+    search_paths: Vec<PathBuf>,
+    regex: regex::bytes::Regex,
+    config: Config,
+) -> Result<ExitCode> {
+    let env_current_dir = env::current_dir().unwrap();
+    let current_dir = env_current_dir.to_str().unwrap();
+    let mut file_name = "/tmp/".to_owned();
+    file_name.push_str(&current_dir.replace('/', "-")[..]);
+    file_name.push_str(".txt");
+
+    if file_name.contains("repos") {
+        if Path::new(&file_name).exists() {
+            let process = std::process::Command::new("grep")
+                .arg(regex.to_string())
+                .arg(&file_name)
+                .output()
+                .unwrap();
+            println!("{}", String::from_utf8_lossy(&process.stdout));
+            Ok(exit_codes::ExitCode::Success)
+        } else {
+            let output = std::process::Command::new("fd").arg(".").output().unwrap();
+            std::fs::write(&file_name, &output.stdout).unwrap();
+            let process = std::process::Command::new("grep")
+                .arg(regex.to_string())
+                .arg(&file_name)
+                .output()
+                .unwrap();
+            println!("{}", String::from_utf8_lossy(&process.stdout));
+            return Ok(exit_codes::ExitCode::Success);
+        }
+    } else {
+        return walk::scan(&search_paths, Arc::new(regex), Arc::new(config));
+    }
 }
 
 fn set_working_dir(matches: &clap::ArgMatches) -> Result<()> {
